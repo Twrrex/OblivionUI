@@ -817,6 +817,41 @@ function OblivionUI:CreateWindow(opts)
             return { Get = function() return current end }
         end
 
+        -- Error isolation: if one element fails, show the error inside the tab
+        -- (red box) and keep building the rest instead of leaving the tab empty.
+        for _, m in ipairs({ "Label", "Button", "Toggle", "Slider", "TextBox", "Selector" }) do
+            local fn = Tab[m]
+            Tab[m] = function(self, ...)
+                local args = table.pack(...)
+                local ok, res = pcall(function()
+                    return fn(self, table.unpack(args, 1, args.n))
+                end)
+                if ok then return res end
+                warn("[OblivionUI] " .. name .. " > " .. m .. " error: " .. tostring(res))
+                pcall(function()
+                    local f = new("Frame", {
+                        Size = UDim2.new(1, 0, 0, 52),
+                        BorderSizePixel = 0,
+                        BackgroundColor3 = Color3.fromRGB(120, 20, 20),
+                        LayoutOrder = nextOrder(),
+                    }, page)
+                    new("TextLabel", {
+                        BackgroundTransparency = 1,
+                        Position = UDim2.fromOffset(6, 2),
+                        Size = UDim2.new(1, -12, 1, -4),
+                        Text = m .. " error: " .. tostring(res),
+                        Font = FONT,
+                        TextSize = 12,
+                        TextWrapped = true,
+                        TextColor3 = Color3.new(1, 1, 1),
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        TextYAlignment = Enum.TextYAlignment.Top,
+                    }, f)
+                end)
+                return { Text = "", Set = function() end, Get = function() end }
+            end
+        end
+
         return Tab
     end
 
