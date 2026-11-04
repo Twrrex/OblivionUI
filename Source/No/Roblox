@@ -539,7 +539,7 @@ function OblivionUI:CreateWindow(opts)
     local function selectTab(t)
         for _, o in ipairs(tabs) do
             o.Page.Visible = (o == t)
-            o.Button.TextTransparency = (o == t) and 0 or 0.45
+            o.TabButton.TextTransparency = (o == t) and 0 or 0.45
         end
     end
 
@@ -573,7 +573,7 @@ function OblivionUI:CreateWindow(opts)
         new("UIPadding", { PaddingRight = UDim.new(0, 6), PaddingTop = UDim.new(0, 2) }, page)
 
         Tab.Page = page
-        Tab.Button = btn
+        Tab.TabButton = btn
         Tab.Order = order or (#tabs + 1)
         table.insert(tabs, Tab)
         btn.MouseButton1Click:Connect(function()
