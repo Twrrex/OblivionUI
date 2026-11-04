@@ -17,6 +17,12 @@ local Debris = game:GetService("Debris")
 
 local OblivionUI = {}
 
+-- Single instance guard: destroys the previous window if the script runs again
+local env = (getgenv and getgenv()) or _G
+if env.__OblivionUI and env.__OblivionUI.Destroy then
+    pcall(env.__OblivionUI.Destroy, env.__OblivionUI)
+end
+
 ------------------------------------------------------------------
 -- SOUND IDS
 ------------------------------------------------------------------
@@ -233,8 +239,11 @@ function OblivionUI:CreateWindow(opts)
 
     local Window = {}
     Window.Gui = gui
+    Window.NotifyTime = 4
+    env.__OblivionUI = Window
 
     function Window:Destroy()
+        Window.Dead = true
         for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
         table.clear(Connections)
         table.clear(Registry)
@@ -260,7 +269,7 @@ function OblivionUI:CreateWindow(opts)
 
     function Window:Notify(ntitle, text, kind, duration)
         kind = kind or "info"
-        duration = duration or 4
+        duration = duration or Window.NotifyTime or 4
         playSound(kind == "error" and Sounds.NotificationErrorID or Sounds.NotificationSoundID)
 
         local box = new("Frame", {
@@ -382,6 +391,9 @@ function OblivionUI:CreateWindow(opts)
         task.wait(0.6)
         loading:Destroy()
     end
+
+    -- if another run destroyed this window while loading, stop here
+    if Window.Dead or not gui.Parent then return Window end
 
     --------------------------------------------------------------
     -- MAIN WINDOW
@@ -523,6 +535,7 @@ function OblivionUI:CreateWindow(opts)
     -- TABS
     --------------------------------------------------------------
     local tabs = {}
+    local userPicked = false
     local function selectTab(t)
         for _, o in ipairs(tabs) do
             o.Page.Visible = (o == t)
@@ -561,12 +574,33 @@ function OblivionUI:CreateWindow(opts)
 
         Tab.Page = page
         Tab.Button = btn
+        Tab.Order = order or (#tabs + 1)
         table.insert(tabs, Tab)
-        btn.MouseButton1Click:Connect(function() selectTab(Tab) end)
-        if #tabs == 1 then selectTab(Tab) end
+        btn.MouseButton1Click:Connect(function()
+            userPicked = true
+            selectTab(Tab)
+        end)
+        -- until the user picks a tab, show the one with the lowest order (Main first)
+        if not userPicked then
+            local lowest = tabs[1]
+            for _, t in ipairs(tabs) do
+                if t.Order < lowest.Order then lowest = t end
+            end
+            selectTab(lowest)
+        end
+
+        local orderCount = 0
+        local function nextOrder()
+            orderCount = orderCount + 1
+            return orderCount
+        end
 
         local function row(h)
-            local f = new("Frame", { Size = UDim2.new(1, 0, 0, h or 28), BorderSizePixel = 0 }, page)
+            local f = new("Frame", {
+                Size = UDim2.new(1, 0, 0, h or 28),
+                BorderSizePixel = 0,
+                LayoutOrder = nextOrder(),
+            }, page)
             theme(f, "BackgroundColor3", "Window")
             stroke(f, 1)
             return f
@@ -588,6 +622,7 @@ function OblivionUI:CreateWindow(opts)
 
         function Tab:Button(text, callback)
             local b = new("TextButton", {
+                LayoutOrder = nextOrder(),
                 Size = UDim2.new(1, 0, 0, 28),
                 Text = text,
                 Font = FONT,
@@ -786,53 +821,112 @@ function OblivionUI:CreateWindow(opts)
     end
 
     --------------------------------------------------------------
-    -- CONFIG TAB (separate from Settings)
+    -- CONFIG + SETTINGS TABS
     --------------------------------------------------------------
-    local cfgTab = Window:CreateTab("Config", 998)
-    cfgTab:Label("== Config File ==")
-    cfgTab:Label("JobID: " .. (game.JobId ~= "" and game.JobId or "(Studio)"))
-    cfgTab:Label("File: " .. FILE)
-    cfgTab:Label("AutoSave: " .. (canFS and "ON (real time)" or "OFF"))
-    cfgTab:Button("Save Config", function()
-        if saveConfigNow() then
-            Window:Notify("Config", "Config saved to " .. FILE, "info")
-        else
-            Window:Notify("Config", "Could not save (no file access).", "error")
+    -- safe(): if a tab fails to build, the error is shown on screen
+    local function safe(name, fn)
+        local ok, err = pcall(fn)
+        if not ok then
+            warn("[OblivionUI] " .. name .. " failed: " .. tostring(err))
+            Window:Notify("UI Error", name .. ": " .. tostring(err):sub(1, 90), "error", 10)
         end
-    end)
-    cfgTab:Button("Delete Config", function()
-        deleteConfig()
-        Window:Notify("Config", "Config deleted. Re-run the script to start fresh.", "error")
+    end
+
+    local refreshInfo = function() end
+
+    safe("Config tab", function()
+        local t = Window:CreateTab("Config", 998)
+
+        t:Label("== Config File ==")
+        t:Label("File: " .. FILE)
+        t:Label("JobID: " .. (game.JobId ~= "" and game.JobId or "(Studio)"))
+        t:Label("AutoSave: " .. (canFS and "ON (real time)" or "OFF (no file access)"))
+
+        t:Label("== Current Values ==")
+        local themeLbl = t:Label("")
+        local sizeLbl = t:Label("")
+        local soundLbl = t:Label("")
+        local flagsLbl = t:Label("")
+        refreshInfo = function()
+            themeLbl.Text = "Theme: " .. Config.Theme
+            sizeLbl.Text = "Size: " .. Config.Size
+            soundLbl.Text = "Sound: " .. (Config.SoundEnabled and "ON" or "OFF")
+            local n = 0
+            for _ in pairs(Config.Flags) do n = n + 1 end
+            flagsLbl.Text = "Saved options: " .. n
+        end
+        refreshInfo()
+
+        t:Label("== Actions ==")
+        t:Button("Save Config", function()
+            if saveConfigNow() then
+                Window:Notify("Config", "Config saved to " .. FILE, "info")
+            else
+                Window:Notify("Config", "Could not save (no file access).", "error")
+            end
+            refreshInfo()
+        end)
+        t:Button("Copy JobID", function()
+            if setclipboard then
+                setclipboard(game.JobId)
+                Window:Notify("Config", "JobID copied.", "info")
+            else
+                Window:Notify("Config", "Clipboard not supported.", "error")
+            end
+        end)
+        t:Button("Copy Config JSON", function()
+            if setclipboard then
+                setclipboard(HttpService:JSONEncode(Config))
+                Window:Notify("Config", "Config JSON copied.", "info")
+            else
+                Window:Notify("Config", "Clipboard not supported.", "error")
+            end
+        end)
+        t:Button("Delete Config", function()
+            deleteConfig()
+            refreshInfo()
+            Window:Notify("Config", "Config deleted. Re-run the script to start fresh.", "error")
+        end)
     end)
 
-    --------------------------------------------------------------
-    -- SETTINGS TAB
-    --------------------------------------------------------------
-    local setTab = Window:CreateTab("Settings", 999)
-    setTab:Label("== Interface ==")
-    setTab:Selector("UI Theme", ThemeOrder, Config.Theme, function(name)
-        applyTheme(name)
-    end)
-    setTab:Selector("UI Size", SizeOrder, Config.Size, function(name)
-        Window:SetSize(name)
-    end)
+    safe("Settings tab", function()
+        local t = Window:CreateTab("Settings", 999)
 
-    setTab:Label("== Sound ==")
-    setTab:Toggle("Enable Sound", Config.SoundEnabled, function(v)
-        Config.SoundEnabled = v
-        autoSave()
-    end, "__EnableSound")
-    setTab:Button("Test Notification", function()
-        Window:Notify("Notification", "Notification sound is working!", "info")
-    end)
-    setTab:Button("Test Error", function()
-        Window:Notify("Error", "Error sound is working!", "error")
-    end)
+        t:Label("== Interface ==")
+        t:Selector("UI Theme", ThemeOrder, Config.Theme, function(name)
+            applyTheme(name)
+            refreshInfo()
+        end)
+        t:Selector("UI Size", SizeOrder, Config.Size, function(name)
+            Window:SetSize(name)
+            refreshInfo()
+        end)
+        t:Button("Reset UI Position", function()
+            main.Position = UDim2.fromScale(0.5, 0.5)
+        end)
 
-    setTab:Label("== Other ==")
-    setTab:Button("Destroy UI", function()
-        saveConfigNow()
-        Window:Destroy()
+        t:Label("== Sound & Notifications ==")
+        t:Toggle("Enable Sound", Config.SoundEnabled, function(v)
+            Config.SoundEnabled = v
+            autoSave()
+            refreshInfo()
+        end, "__EnableSound")
+        t:Slider("Notification Time (s)", 2, 10, 4, function(v)
+            Window.NotifyTime = v
+        end, "__NotifyTime")
+        t:Button("Test Notification", function()
+            Window:Notify("Notification", "Notification sound is working!", "info")
+        end)
+        t:Button("Test Error", function()
+            Window:Notify("Error", "Error sound is working!", "error")
+        end)
+
+        t:Label("== Other ==")
+        t:Label("Toggle key: Left Control")
+        t:Button("Destroy UI", function()
+            saveConfigNow()
+            Window:Destroy()
+        end)
     end)
 
     sizeReady = true
