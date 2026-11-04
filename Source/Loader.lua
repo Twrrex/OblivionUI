@@ -1,8 +1,10 @@
 --[[
-    OblivionUI - UI Library estilo anos 2000
-    Temas: Cinza Escuro, Windows XP, Black
-    Config com AutoSave em tempo real (OblivionUI/Config_OB.json)
-    Tecla para abrir/fechar: Left Control
+    OblivionUI - Early 2000s style UI Library (all-in-one script)
+    Themes: Dark Gray, Windows XP, Black
+    Sizes: Small, Medium, Large
+    Real-time AutoSave config: OblivionUI/Config_OB.json
+    Toggle key: Left Control
+    Paste and run. The demo tab ("Main") is at the bottom - edit or remove it.
 ]]
 
 local Players = game:GetService("Players")
@@ -16,7 +18,7 @@ local Debris = game:GetService("Debris")
 local OblivionUI = {}
 
 ------------------------------------------------------------------
--- IDs DE SOM
+-- SOUND IDS
 ------------------------------------------------------------------
 local Sounds = {
     NotificationSoundID = 195868961,
@@ -25,10 +27,10 @@ local Sounds = {
 }
 
 ------------------------------------------------------------------
--- TEMAS
+-- THEMES / SIZES
 ------------------------------------------------------------------
 local Themes = {
-    ["Cinza Escuro"] = {
+    ["Dark Gray"] = {
         Window = Color3.fromRGB(58, 58, 58),
         Panel = Color3.fromRGB(44, 44, 44),
         Button = Color3.fromRGB(92, 92, 92),
@@ -59,10 +61,17 @@ local Themes = {
         Accent = Color3.fromRGB(210, 210, 210),
     },
 }
-local ThemeOrder = { "Cinza Escuro", "Windows XP", "Black" }
+local ThemeOrder = { "Dark Gray", "Windows XP", "Black" }
+
+local Sizes = {
+    Small = Vector2.new(440, 300),
+    Medium = Vector2.new(540, 360),
+    Large = Vector2.new(700, 460),
+}
+local SizeOrder = { "Small", "Medium", "Large" }
 
 ------------------------------------------------------------------
--- CONFIG (AutoSave em tempo real)
+-- CONFIG (real-time AutoSave)
 ------------------------------------------------------------------
 local FOLDER = "OblivionUI"
 local FILE = FOLDER .. "/Config_OB.json"
@@ -72,7 +81,8 @@ local canFS = (writefile and readfile and isfile and makefolder and isfolder) an
 local function defaultConfig()
     return {
         JobID = game.JobId,
-        Theme = "Cinza Escuro",
+        Theme = "Dark Gray",
+        Size = "Medium",
         SoundEnabled = true,
         Flags = {},
     }
@@ -88,27 +98,24 @@ local function loadConfig()
         end
     end)
     if ok and type(data) == "table" then
-        Config.Theme = Themes[data.Theme] and data.Theme or Config.Theme
-        if type(data.SoundEnabled) == "boolean" then
-            Config.SoundEnabled = data.SoundEnabled
-        end
-        if type(data.Flags) == "table" then
-            Config.Flags = data.Flags
-        end
+        if Themes[data.Theme] then Config.Theme = data.Theme end
+        if Sizes[data.Size] then Config.Size = data.Size end
+        if type(data.SoundEnabled) == "boolean" then Config.SoundEnabled = data.SoundEnabled end
+        if type(data.Flags) == "table" then Config.Flags = data.Flags end
     end
 end
 
-local saveQueued = false
 local function saveConfigNow()
-    if not canFS then return end
-    pcall(function()
+    if not canFS then return false end
+    local ok = pcall(function()
         if not isfolder(FOLDER) then makefolder(FOLDER) end
         Config.JobID = game.JobId
         writefile(FILE, HttpService:JSONEncode(Config))
     end)
+    return ok
 end
 
--- AutoSave: chamado a cada mudança
+local saveQueued = false
 local function autoSave()
     if saveQueued then return end
     saveQueued = true
@@ -119,7 +126,7 @@ local function autoSave()
 end
 
 local function deleteConfig()
-    if canFS and isfile(FILE) and delfile then
+    if canFS and delfile and isfile(FILE) then
         pcall(delfile, FILE)
     end
     Config = defaultConfig()
@@ -128,7 +135,14 @@ end
 ------------------------------------------------------------------
 -- HELPERS
 ------------------------------------------------------------------
-local Registry = {} -- {obj, prop, key}
+local Registry = {}
+local Connections = {}
+
+local function connect(signal, fn)
+    local c = signal:Connect(fn)
+    table.insert(Connections, c)
+    return c
+end
 
 local function new(class, props, parent)
     local o = Instance.new(class)
@@ -139,8 +153,7 @@ end
 
 local function theme(obj, prop, key)
     table.insert(Registry, { obj, prop, key })
-    local t = Themes[Config.Theme]
-    obj[prop] = t[key]
+    obj[prop] = Themes[Config.Theme][key]
 end
 
 local function applyTheme(name)
@@ -160,10 +173,7 @@ end
 
 local function playSound(id)
     if not Config.SoundEnabled then return end
-    local s = new("Sound", {
-        SoundId = "rbxassetid://" .. tostring(id),
-        Volume = 1,
-    }, SoundService)
+    local s = new("Sound", { SoundId = "rbxassetid://" .. tostring(id), Volume = 1 }, SoundService)
     s:Play()
     Debris:AddItem(s, 6)
 end
@@ -206,6 +216,11 @@ function OblivionUI:CreateWindow(opts)
     opts = opts or {}
     local title = opts.Title or "OblivionUI"
 
+    -- remove old instance if re-executed
+    local parentGui = getGuiParent()
+    local old = parentGui:FindFirstChild("OblivionUI")
+    if old then old:Destroy() end
+
     loadConfig()
 
     local gui = new("ScreenGui", {
@@ -214,13 +229,20 @@ function OblivionUI:CreateWindow(opts)
         ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
         DisplayOrder = 999,
     })
-    gui.Parent = getGuiParent()
+    gui.Parent = parentGui
 
     local Window = {}
     Window.Gui = gui
 
+    function Window:Destroy()
+        for _, c in ipairs(Connections) do pcall(function() c:Disconnect() end) end
+        table.clear(Connections)
+        table.clear(Registry)
+        if gui then gui:Destroy() end
+    end
+
     --------------------------------------------------------------
-    -- NOTIFICAÇÕES
+    -- NOTIFICATIONS
     --------------------------------------------------------------
     local notifHolder = new("Frame", {
         BackgroundTransparency = 1,
@@ -249,21 +271,17 @@ function OblivionUI:CreateWindow(opts)
         theme(box, "BackgroundColor3", "Window")
         stroke(box, 2)
 
-        local bar = new("Frame", {
-            Size = UDim2.new(1, 0, 0, 18),
-            BorderSizePixel = 0,
-            ZIndex = 51,
-        }, box)
+        local bar = new("Frame", { Size = UDim2.new(1, 0, 0, 18), BorderSizePixel = 0, ZIndex = 51 }, box)
         if kind == "error" then
             bar.BackgroundColor3 = Color3.fromRGB(170, 30, 30)
         else
             theme(bar, "BackgroundColor3", "Title")
         end
-        local bt = new("TextLabel", {
+        new("TextLabel", {
             BackgroundTransparency = 1,
             Position = UDim2.fromOffset(6, 0),
             Size = UDim2.new(1, -12, 1, 0),
-            Text = ntitle or "Aviso",
+            Text = ntitle or "Notice",
             Font = FONT,
             TextSize = 13,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -286,14 +304,12 @@ function OblivionUI:CreateWindow(opts)
         theme(body, "TextColor3", "Text")
 
         task.delay(duration, function()
-            if box and box.Parent then
-                box:Destroy()
-            end
+            if box and box.Parent then box:Destroy() end
         end)
     end
 
     --------------------------------------------------------------
-    -- TELA DE LOADING (estilo Windows)
+    -- LOADING SCREEN (Windows style)
     --------------------------------------------------------------
     do
         local loading = new("Frame", {
@@ -306,11 +322,7 @@ function OblivionUI:CreateWindow(opts)
         theme(loading, "BackgroundColor3", "Window")
         stroke(loading, 2)
 
-        local lt = new("Frame", {
-            Size = UDim2.new(1, 0, 0, 22),
-            BorderSizePixel = 0,
-            ZIndex = 101,
-        }, loading)
+        local lt = new("Frame", { Size = UDim2.new(1, 0, 0, 22), BorderSizePixel = 0, ZIndex = 101 }, loading)
         theme(lt, "BackgroundColor3", "Title")
         local ltt = new("TextLabel", {
             BackgroundTransparency = 1,
@@ -328,7 +340,7 @@ function OblivionUI:CreateWindow(opts)
             BackgroundTransparency = 1,
             Position = UDim2.fromOffset(14, 36),
             Size = UDim2.new(1, -28, 0, 20),
-            Text = "Iniciando...",
+            Text = "Starting...",
             Font = FONT,
             TextSize = 14,
             TextXAlignment = Enum.TextXAlignment.Left,
@@ -354,10 +366,10 @@ function OblivionUI:CreateWindow(opts)
         theme(fill, "BackgroundColor3", "Accent")
 
         local steps = {
-            { "Carregando config...", 0.25 },
-            { "Aplicando tema: " .. Config.Theme, 0.5 },
-            { "Montando interface...", 0.8 },
-            { "Finalizando...", 1 },
+            { "Loading config...", 0.25 },
+            { "Applying theme: " .. Config.Theme, 0.5 },
+            { "Building interface...", 0.8 },
+            { "Finishing...", 1 },
         }
         for _, s in ipairs(steps) do
             status.Text = s[1]
@@ -372,12 +384,13 @@ function OblivionUI:CreateWindow(opts)
     end
 
     --------------------------------------------------------------
-    -- JANELA PRINCIPAL
+    -- MAIN WINDOW
     --------------------------------------------------------------
+    local startSize = Sizes[Config.Size]
     local main = new("Frame", {
         AnchorPoint = Vector2.new(0.5, 0.5),
         Position = UDim2.fromScale(0.5, 0.5),
-        Size = UDim2.fromOffset(540, 360),
+        Size = UDim2.fromOffset(startSize.X, startSize.Y),
         BorderSizePixel = 0,
         Visible = true,
     }, gui)
@@ -385,10 +398,7 @@ function OblivionUI:CreateWindow(opts)
     stroke(main, 2)
     Window.Main = main
 
-    local titleBar = new("Frame", {
-        Size = UDim2.new(1, 0, 0, 26),
-        BorderSizePixel = 0,
-    }, main)
+    local titleBar = new("Frame", { Size = UDim2.new(1, 0, 0, 26), BorderSizePixel = 0 }, main)
     theme(titleBar, "BackgroundColor3", "Title")
 
     local tt = new("TextLabel", {
@@ -402,27 +412,30 @@ function OblivionUI:CreateWindow(opts)
     }, titleBar)
     theme(tt, "TextColor3", "TitleText")
 
+    -- X button: closes the UI completely
     local closeBtn = new("TextButton", {
         AnchorPoint = Vector2.new(1, 0.5),
         Position = UDim2.new(1, -4, 0.5, 0),
-        Size = UDim2.fromOffset(20, 18),
+        Size = UDim2.fromOffset(22, 18),
         Text = "X",
         Font = FONT,
         TextSize = 13,
         AutoButtonColor = false,
         BorderSizePixel = 0,
+        ZIndex = 5,
     }, titleBar)
     theme(closeBtn, "BackgroundColor3", "Button")
     theme(closeBtn, "TextColor3", "Text")
     stroke(closeBtn, 1)
-    closeBtn.MouseButton1Click:Connect(function()
-        main.Visible = false
+    closeBtn.Activated:Connect(function()
+        saveConfigNow()
+        Window:Destroy()
     end)
 
-    -- arrastar
+    -- drag
     do
         local dragging, startPos, startMouse
-        titleBar.InputBegan:Connect(function(i)
+        connect(titleBar.InputBegan, function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1
                 or i.UserInputType == Enum.UserInputType.Touch then
                 dragging = true
@@ -430,7 +443,7 @@ function OblivionUI:CreateWindow(opts)
                 startPos = main.Position
             end
         end)
-        UIS.InputChanged:Connect(function(i)
+        connect(UIS.InputChanged, function(i)
             if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement
                 or i.UserInputType == Enum.UserInputType.Touch) then
                 local d = i.Position - startMouse
@@ -438,7 +451,7 @@ function OblivionUI:CreateWindow(opts)
                     startPos.Y.Scale, startPos.Y.Offset + d.Y)
             end
         end)
-        UIS.InputEnded:Connect(function(i)
+        connect(UIS.InputEnded, function(i)
             if i.UserInputType == Enum.UserInputType.MouseButton1
                 or i.UserInputType == Enum.UserInputType.Touch then
                 dragging = false
@@ -446,7 +459,6 @@ function OblivionUI:CreateWindow(opts)
         end)
     end
 
-    -- barra de tabs (esquerda)
     local tabBar = new("ScrollingFrame", {
         Position = UDim2.fromOffset(6, 32),
         Size = UDim2.new(0, 120, 1, -60),
@@ -470,26 +482,42 @@ function OblivionUI:CreateWindow(opts)
     theme(pages, "BackgroundColor3", "Panel")
     stroke(pages, 2)
 
-    -- status bar
     local statusBar = new("TextLabel", {
         AnchorPoint = Vector2.new(0, 1),
         Position = UDim2.new(0, 6, 1, -4),
         Size = UDim2.new(1, -12, 0, 18),
         BackgroundTransparency = 1,
-        Text = "[LeftCtrl] Abrir/Fechar  |  AutoSave: ON",
+        Text = "[LeftCtrl] Open/Close  |  AutoSave: " .. (canFS and "ON" or "OFF (no file access)"),
         Font = FONT,
         TextSize = 12,
         TextXAlignment = Enum.TextXAlignment.Left,
     }, main)
     theme(statusBar, "TextColor3", "Text")
 
-    -- Left Control abre/fecha
-    UIS.InputBegan:Connect(function(input, gp)
+    -- Left Control toggles visibility
+    connect(UIS.InputBegan, function(input, gp)
         if gp then return end
         if input.KeyCode == Enum.KeyCode.LeftControl then
             main.Visible = not main.Visible
         end
     end)
+
+    function Window:Toggle()
+        main.Visible = not main.Visible
+    end
+
+    local sizeReady = false
+    function Window:SetSize(name)
+        local s = Sizes[name]
+        if not s then return end
+        Config.Size = name
+        if sizeReady then
+            TweenService:Create(main, TweenInfo.new(0.2), { Size = UDim2.fromOffset(s.X, s.Y) }):Play()
+            autoSave()
+        else
+            main.Size = UDim2.fromOffset(s.X, s.Y)
+        end
+    end
 
     --------------------------------------------------------------
     -- TABS
@@ -538,10 +566,7 @@ function OblivionUI:CreateWindow(opts)
         if #tabs == 1 then selectTab(Tab) end
 
         local function row(h)
-            local f = new("Frame", {
-                Size = UDim2.new(1, 0, 0, h or 28),
-                BorderSizePixel = 0,
-            }, page)
+            local f = new("Frame", { Size = UDim2.new(1, 0, 0, h or 28), BorderSizePixel = 0 }, page)
             theme(f, "BackgroundColor3", "Window")
             stroke(f, 1)
             return f
@@ -664,13 +689,13 @@ function OblivionUI:CreateWindow(opts)
                     fromInput(i.Position.X)
                 end
             end)
-            UIS.InputChanged:Connect(function(i)
+            connect(UIS.InputChanged, function(i)
                 if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement
                     or i.UserInputType == Enum.UserInputType.Touch) then
                     fromInput(i.Position.X)
                 end
             end)
-            UIS.InputEnded:Connect(function(i)
+            connect(UIS.InputEnded, function(i)
                 if i.UserInputType == Enum.UserInputType.MouseButton1
                     or i.UserInputType == Enum.UserInputType.Touch then
                     dragging = false
@@ -713,10 +738,8 @@ function OblivionUI:CreateWindow(opts)
             return tb
         end
 
-        -- Selector: fileira de botões (usado pra escolher tema)
-        function Tab:Selector(text, options, default, callback, flag)
-            flag = flag or text
-            local current = saved(flag, default or options[1])
+        -- Row of option buttons (used for Theme and Size)
+        function Tab:Selector(text, options, current, callback)
             local f = row(54)
             local l = label(f, text)
             l.Position = UDim2.fromOffset(8, 2)
@@ -727,10 +750,7 @@ function OblivionUI:CreateWindow(opts)
                 Position = UDim2.fromOffset(6, 24),
                 Size = UDim2.new(1, -12, 0, 24),
             }, f)
-            new("UIListLayout", {
-                FillDirection = Enum.FillDirection.Horizontal,
-                Padding = UDim.new(0, 4),
-            }, holder)
+            new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 4) }, holder)
 
             local btns = {}
             local function refresh()
@@ -754,14 +774,11 @@ function OblivionUI:CreateWindow(opts)
                 btns[opt] = b
                 b.MouseButton1Click:Connect(function()
                     current = opt
-                    Config.Flags[flag] = opt
                     refresh()
-                    autoSave()
                     if callback then task.spawn(callback, opt) end
                 end)
             end
             refresh()
-            if callback then task.spawn(callback, current) end
             return { Get = function() return current end }
         end
 
@@ -769,62 +786,84 @@ function OblivionUI:CreateWindow(opts)
     end
 
     --------------------------------------------------------------
-    -- ABA SETTINGS (config)
+    -- CONFIG TAB (separate from Settings)
     --------------------------------------------------------------
-    local settings = Window:CreateTab("Settings", 999)
-
-    settings:Label("== Interface ==")
-    settings:Selector("Tema da UI", ThemeOrder, Config.Theme, function(name)
-        if name ~= Config.Theme then
-            applyTheme(name)
+    local cfgTab = Window:CreateTab("Config", 998)
+    cfgTab:Label("== Config File ==")
+    cfgTab:Label("JobID: " .. (game.JobId ~= "" and game.JobId or "(Studio)"))
+    cfgTab:Label("File: " .. FILE)
+    cfgTab:Label("AutoSave: " .. (canFS and "ON (real time)" or "OFF"))
+    cfgTab:Button("Save Config", function()
+        if saveConfigNow() then
+            Window:Notify("Config", "Config saved to " .. FILE, "info")
+        else
+            Window:Notify("Config", "Could not save (no file access).", "error")
         end
-    end, "__ThemeSelector")
+    end)
+    cfgTab:Button("Delete Config", function()
+        deleteConfig()
+        Window:Notify("Config", "Config deleted. Re-run the script to start fresh.", "error")
+    end)
 
-    settings:Label("== Som ==")
-    settings:Toggle("Enable Sound", Config.SoundEnabled, function(v)
+    --------------------------------------------------------------
+    -- SETTINGS TAB
+    --------------------------------------------------------------
+    local setTab = Window:CreateTab("Settings", 999)
+    setTab:Label("== Interface ==")
+    setTab:Selector("UI Theme", ThemeOrder, Config.Theme, function(name)
+        applyTheme(name)
+    end)
+    setTab:Selector("UI Size", SizeOrder, Config.Size, function(name)
+        Window:SetSize(name)
+    end)
+
+    setTab:Label("== Sound ==")
+    setTab:Toggle("Enable Sound", Config.SoundEnabled, function(v)
         Config.SoundEnabled = v
         autoSave()
     end, "__EnableSound")
-
-    settings:Button("Testar notificacao", function()
-        Window:Notify("Notificacao", "Som de notificacao funcionando!", "info")
+    setTab:Button("Test Notification", function()
+        Window:Notify("Notification", "Notification sound is working!", "info")
     end)
-    settings:Button("Testar erro", function()
-        Window:Notify("Erro", "Som de erro funcionando!", "error")
+    setTab:Button("Test Error", function()
+        Window:Notify("Error", "Error sound is working!", "error")
     end)
 
-    settings:Label("== Config ==")
-    settings:Label("JobID: " .. tostring(game.JobId ~= "" and game.JobId or "(Studio)"))
-    settings:Label("Arquivo: " .. FILE)
-
-    settings:Button("Save Config", function()
+    setTab:Label("== Other ==")
+    setTab:Button("Destroy UI", function()
         saveConfigNow()
-        Window:Notify("Config", "Config salva em " .. FILE, "info")
+        Window:Destroy()
     end)
 
-    settings:Button("Excluir Config", function()
-        deleteConfig()
-        Window:Notify("Config", "Config excluida. Reexecute para recomecar.", "error")
-    end)
-
-    settings:Button("Fechar / Destruir UI", function()
-        gui:Destroy()
-    end)
-
-    -- Se a config foi carregada com outro tema, aplica
+    sizeReady = true
     applyTheme(Config.Theme)
     saveConfigNow()
 
-    Window:Notify("OblivionUI", "Carregada! Aperte Left Control para abrir/fechar.", "info")
-
-    function Window:Toggle()
-        main.Visible = not main.Visible
-    end
-    function Window:Destroy()
-        gui:Destroy()
-    end
+    Window:Notify("OblivionUI", "Loaded! Press Left Control to open/close.", "info")
 
     return Window
 end
+
+------------------------------------------------------------------
+-- DEMO (edit or remove)
+------------------------------------------------------------------
+local Window = OblivionUI:CreateWindow({ Title = "OblivionUI v1.1" })
+
+local Main = Window:CreateTab("Main", 1)
+Main:Label("Welcome to OblivionUI!")
+Main:Button("Send Notification", function()
+    Window:Notify("Hello", "You clicked the button!", "info")
+end)
+Main:Toggle("Auto Farm", false, function(v)
+    print("Auto Farm:", v)
+end)
+Main:Slider("WalkSpeed", 16, 100, 16, function(v)
+    local char = Players.LocalPlayer.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    if hum then hum.WalkSpeed = v end
+end)
+Main:TextBox("Name", "", function(txt)
+    print("Text:", txt)
+end)
 
 return OblivionUI
